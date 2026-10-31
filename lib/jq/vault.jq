@@ -1,7 +1,8 @@
 # Input: every cache node (page_*.json / db_*.json) as a stream; run with -n.
 # Output (--raw-output0): for each note, its id, its vault-relative path and
 # then its markdown, as three NUL-terminated strings. Last comes _estado.md,
-# the index of notes whose page is no longer active in Notion.
+# the index of notes whose page is no longer active in Notion or is outside
+# every root.
 #
 # Folders mirror the cached parent chain. Linked database views get no note;
 # they render as "[[Source]] (vista)" wherever they appear.
@@ -91,13 +92,14 @@ def db_md($t; $by; $kids):
     + section("Schema"; $schema)
     + section("Rows (\($rows | length))"; $rows | map("- " + wikilink($t; .; null) + status_tag($by; .)));
 
-# Index of every note whose page is not active, by status then date.
+# Index of every note whose page is not active, or no longer under a root,
+# by status then date.
 def estado_md($out):
   ($out | map(select(.node | node_status != "active"))
    | sort_by([(.node | node_status), (.node.status_since // ""), .node.title])) as $off
   | ["# Estado de las páginas", ""]
     + (if ($off | length) == 0 then ["Todas las páginas del espejo están activas en Notion."]
-       else ["Páginas que ya no están activas en Notion. Sus notas se conservan como estaban.", ""]
+       else ["Páginas que ya no están activas en Notion o que quedaron fuera de las raíces sincronizadas. Sus notas se conservan como estaban.", ""]
          + ($off | map("- [[" + (.rel | split("/") | last | sub("\\.md$"; "")) + "]] — "
                        + (.node | node_status | status_label) + " desde " + (.node.status_since // "" | dmy)))
        end);

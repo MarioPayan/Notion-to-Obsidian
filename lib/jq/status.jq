@@ -1,4 +1,5 @@
-# Page status: active | archived | in_trash | unreachable.
+# Page status: active | archived | in_trash | unreachable | outside.
+# outside is set by the crawler, never by Notion (see lib/status.sh).
 # Used as a module (`include "status";`, run jq with -L lib/jq).
 
 # Input: a Notion page, database or search result. API 2025-09-03 returns
@@ -17,10 +18,12 @@ def dmy: split("-") | reverse | join("-");
 
 # Short Spanish label for listings, e.g. "archivada".
 def status_label:
-  {archived: "archivada", in_trash: "en la papelera", unreachable: "no accesible"}[.] // "";
+  {archived: "archivada", in_trash: "en la papelera", unreachable: "no accesible",
+   outside: "fuera de las raíces"}[.] // "";
 
 # Banner text after "Esta página " / "Esta base de datos ".
 def status_phrase:
   {archived: "está archivada en Notion",
    in_trash: "está en la papelera de Notion",
-   unreachable: "ya no es accesible en Notion (borrada o sin permiso)"}[.] // "";
+   unreachable: "ya no es accesible en Notion (borrada o sin permiso)",
+   outside: "está fuera de las raíces sincronizadas (solo se mencionaba)"}[.] // "";

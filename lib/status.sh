@@ -1,6 +1,9 @@
 # Page status. Every cache node carries
-#   status:       active | archived | in_trash | unreachable
+#   status:       active | archived | in_trash | unreachable | outside
 #   status_since: the date (YYYY-MM-DD) it took that status
+# outside is ours, not Notion's: the page is active in Notion but a full
+# crawl no longer reaches it from any root (it was only mentioned, or it was
+# moved out). Its content is never refreshed again.
 # Nodes are never removed from the cache: a page that disappears from Notion
 # keeps its note, marked with its status (see lib/jq/vault.jq).
 
@@ -48,11 +51,12 @@ backfill_status() {
              -exec jq -r 'select(.status_since | not) | input_filename' {} +)
 }
 
-# check_status KIND ID: GET the node and record what Notion says about it.
-# A gone or unshared object becomes unreachable; any other error leaves the
-# status as it was and returns 1.
+# check_status KIND ID [OUTSIDE]: GET the node and record what Notion says
+# about it. A gone or unshared object becomes unreachable; any other error
+# leaves the status as it was and returns 1. With OUTSIDE set, a node Notion
+# reports as active is recorded as outside instead.
 check_status() {
-  local kind="$1" id="$2" f obj rc=0
+  local kind="$1" id="$2" outside="${3:-}" f obj s rc=0
   f="$(cache_file_for "$kind" "$id")"
   if [ "$kind" = "database" ]; then
     obj="$(NOTION_QUIET_GONE=1 notion_get_database "$id")" || rc=$?
@@ -60,27 +64,32 @@ check_status() {
     obj="$(NOTION_QUIET_GONE=1 notion_get_page "$id")" || rc=$?
   fi
   case "$rc" in
-    0) set_status "$f" "$(status_of <<<"$obj")" ;;
+    0) s="$(status_of <<<"$obj")"
+       [ "$s" = active ] && [ -n "$outside" ] && s=outside
+       set_status "$f" "$s" ;;
     3) set_status "$f" unreachable ;;
     *) return 1 ;;
   esac
 }
 
 # Public, after a full crawl: re-check every cached node the crawl did not
-# reach (no .done_<id> marker) or could not fetch.
+# reach (no .done_<id> marker) or could not fetch. An unreached node that is
+# still active in Notion is outside every root.
 check_unreached_status() {
-  local f id kind failed n=0 bad=0
+  local f id kind failed outside n=0 bad=0
   failed="$(list_failures | cut -f2)"
   for f in "$CACHE_DIR"/page_*.json "$CACHE_DIR"/db_*.json; do
     [ -e "$f" ] || continue
     id="${f##*/}"; kind=page
     case "$id" in db_*) kind=database ;; esac
     id="${id#page_}"; id="${id#db_}"; id="${id%.json}"
-    if [ -f "$CACHE_DIR/.done_$id" ] && ! grep -qxF "$id" <<<"$failed"; then
-      continue
+    outside=outside
+    if [ -f "$CACHE_DIR/.done_$id" ]; then
+      grep -qxF "$id" <<<"$failed" || continue
+      outside=""
     fi
     n=$((n + 1))
-    check_status "$kind" "$id" || bad=$((bad + 1))
+    check_status "$kind" "$id" "$outside" || bad=$((bad + 1))
   done
   [ "$n" -gt 0 ] || return 0
   log_info "Checked the status of $n cached node$([ "$n" = "1" ] || echo s) the crawl did not reach"
@@ -90,17 +99,20 @@ check_unreached_status() {
 # Public, after an incremental run: re-check every node that is not active.
 # Restoring a page from the trash does not bump its last_edited_time, so
 # search never reports it; this keeps restores visible at the cost of one GET
-# per non-active node (usually none).
+# per non-active node (usually none). An outside node stays outside while
+# Notion reports it active; only a full crawl that reaches it again clears it.
 check_inactive_status() {
-  local f id kind n=0
+  local f id kind s outside n=0
   for f in "$CACHE_DIR"/page_*.json "$CACHE_DIR"/db_*.json; do
     [ -e "$f" ] || continue
-    [ "$(jq -r '.status // "active"' "$f")" = "active" ] && continue
+    s="$(jq -r '.status // "active"' "$f")"
+    [ "$s" = "active" ] && continue
+    outside=""; [ "$s" = "outside" ] && outside=outside
     id="${f##*/}"; kind=page
     case "$id" in db_*) kind=database ;; esac
     id="${id#page_}"; id="${id#db_}"; id="${id%.json}"
     n=$((n + 1))
-    check_status "$kind" "$id" || log_warn "Status check failed for $id; status unchanged"
+    check_status "$kind" "$id" "$outside" || log_warn "Status check failed for $id; status unchanged"
   done
   [ "$n" -gt 0 ] && log_info "Re-checked $n non-active node$([ "$n" = "1" ] || echo s)"
   return 0

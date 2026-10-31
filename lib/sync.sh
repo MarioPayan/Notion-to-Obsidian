@@ -37,24 +37,28 @@ iso_minus_minutes() {
   date -u -d "@$(( $(date -u -d "$1" +%s) - $2 * 60 ))" +%Y-%m-%dT%H:%M:%S.000Z
 }
 
-# Load "id kind parentId" for every cached node into the global associative
-# arrays CACHED_KIND and CACHED_PARENT (one jq call for the whole cache).
+# Load "id kind status parentId" for every cached node into the global
+# associative arrays CACHED_KIND, CACHED_STATUS and CACHED_PARENT (one jq call
+# for the whole cache).
 _load_cache_index() {
-  declare -gA CACHED_KIND=() CACHED_PARENT=()
-  local id kind parent
-  while IFS=$'\t' read -r id kind parent; do
+  declare -gA CACHED_KIND=() CACHED_STATUS=() CACHED_PARENT=()
+  local id kind status parent
+  while IFS=$'\x1f' read -r id kind status parent; do
     [ -z "$id" ] && continue
     CACHED_KIND[$id]="$kind"
+    CACHED_STATUS[$id]="$status"
     CACHED_PARENT[$id]="$parent"
   done < <(find "$CACHE_DIR" -maxdepth 1 \( -name 'page_*.json' -o -name 'db_*.json' \) \
-             -exec jq -r '[.id, .kind, (.parentId // "")] | @tsv' {} +)
+             -exec jq -r '[.id, .kind, (.status // "active"), (.parentId // "")] | join("\u001f")' {} +)
 }
 
-# True when ID is cached and its cached parent chain reaches a root.
+# True when ID is cached and its cached parent chain reaches a root without
+# crossing an outside node (whose cached parent is stale by definition).
 _under_roots() {
   local cur="$1" hops=0 r
   while [ -n "$cur" ] && [ "$hops" -lt 64 ]; do
     [ -n "${CACHED_KIND[$cur]:-}" ] || return 1
+    [ "${CACHED_STATUS[$cur]}" = "outside" ] && return 1
     for r in "${ROOT_IDS[@]}"; do
       [ "$cur" = "$r" ] && return 0
     done
