@@ -1,0 +1,8 @@
+{
+  "concurrency": 10,
+  "output_dir": "output",
+  "vault_dir": "vault",
+  "cache_dir": ".cache",
+  "debug": false,
+  "sync_margin_minutes": 5
+}
