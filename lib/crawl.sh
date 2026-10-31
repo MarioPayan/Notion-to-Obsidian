@@ -42,10 +42,35 @@ is_done() {
   [ -f "$CACHE_DIR/.done_$1" ]
 }
 
-# Recursively walk childRefs. A ref may carry `edited` (database rows), which
-# lets crawl_page skip the GET when the cache is current. In incremental mode
-# (SYNC_MODE=incremental) refs without `edited` that are already cached are
-# not descended into: the search pass decides what changed.
+# _reuse_cached_page FILE PARENT_ID: echo the refs of a cached page that is
+# current. Its refs are recomputed from its cached blocks, and when they or
+# the parent it is reached from now differ from the cache, both are rewritten
+# atomically. That repairs caches whose refs once included mentions (which
+# placed a merely mentioned page under the page that mentioned it) without
+# fetching anything.
+_reuse_cached_page() {
+  local f="$1" parent="$2" old title
+  IFS=$'\x1f' read -r old title < <(jq -r '[.parentId // "", .title] | join("\u001f")' "$f")
+  jq -L "$JQ_DIR" --arg p "$parent" '
+    include "extract_refs";
+    (.blocks | child_refs) as $refs
+    | (if $p == "" then null else $p end) as $np
+    | select(.parentId != $np or .childRefs != $refs)
+    | .parentId = $np | .childRefs = $refs' "$f" > "$f.tmp"
+  if [ -s "$f.tmp" ]; then
+    mv "$f.tmp" "$f"
+    [ "$old" = "$parent" ] || log_info "Moved: $title (now under ${parent:-the root})"
+  else
+    rm -f "$f.tmp"
+  fi
+  jq -c '.childRefs // []' "$f"
+}
+
+# Recursively walk childRefs: the pages and databases a node contains, never
+# the ones it mentions or links to. A ref may carry `edited` (database rows),
+# which lets crawl_page skip the GET when the cache is current. In incremental
+# mode (SYNC_MODE=incremental) refs without `edited` that are already cached
+# are not descended into: the search pass decides what changed.
 recurse_refs() {
   local refs="$1" parent_id="$2"
   local cid ckind cedited
@@ -81,7 +106,7 @@ crawl_page() {
     bump_cached "page: $(jq -r '.title' "$cache_file")"
     set_status "$cache_file" active
     local cached_refs
-    cached_refs="$(jq -c '.childRefs // []' "$cache_file")"
+    cached_refs="$(_reuse_cached_page "$cache_file" "$parent_id")"
     mark_done "$id"
     release_lock "$id"
     recurse_refs "$cached_refs" "$id"
@@ -110,12 +135,12 @@ crawl_page() {
      && [ "$(jq -r '.kind' "$cache_file")" = "page" ]; then
     bump_cached "page: $title"
     set_status "$cache_file" "$status"
-    refs="$(jq -c '.childRefs // []' "$cache_file")"
+    refs="$(_reuse_cached_page "$cache_file" "$parent_id")"
   else
     bump_fetched "page: $title"
     local blocks
     blocks="$(notion_list_blocks_recursive "$id")" || blocks="[]"
-    refs="$(jq -c -f "$JQ_DIR/extract_refs.jq" <<<"$blocks")"
+    refs="$(jq -c -L "$JQ_DIR" 'include "extract_refs"; child_refs' <<<"$blocks")"
 
     local tmp="$cache_file.tmp"
     jq -n \
