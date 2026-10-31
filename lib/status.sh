@@ -86,3 +86,22 @@ check_unreached_status() {
   log_info "Checked the status of $n cached node$([ "$n" = "1" ] || echo s) the crawl did not reach"
   [ "$bad" -eq 0 ] || log_warn "$bad status check$([ "$bad" = "1" ] || echo s) failed; their status is unchanged"
 }
+
+# Public, after an incremental run: re-check every node that is not active.
+# Restoring a page from the trash does not bump its last_edited_time, so
+# search never reports it; this keeps restores visible at the cost of one GET
+# per non-active node (usually none).
+check_inactive_status() {
+  local f id kind n=0
+  for f in "$CACHE_DIR"/page_*.json "$CACHE_DIR"/db_*.json; do
+    [ -e "$f" ] || continue
+    [ "$(jq -r '.status // "active"' "$f")" = "active" ] && continue
+    id="${f##*/}"; kind=page
+    case "$id" in db_*) kind=database ;; esac
+    id="${id#page_}"; id="${id#db_}"; id="${id%.json}"
+    n=$((n + 1))
+    check_status "$kind" "$id" || log_warn "Status check failed for $id; status unchanged"
+  done
+  [ "$n" -gt 0 ] && log_info "Re-checked $n non-active node$([ "$n" = "1" ] || echo s)"
+  return 0
+}

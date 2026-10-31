@@ -251,6 +251,8 @@ retry_failed
 # Only a full crawl knows which cached nodes it no longer reaches; ask Notion
 # about each of them. Their notes stay either way.
 [ "$SYNC_MODE" = "full" ] && check_unreached_status
+# Search never reports trash/restore changes; re-check what is not active.
+[ "$SYNC_MODE" = "full" ] || check_inactive_status
 
 # ---- Sync state --------------------------------------------------------------
 # Only a run with no remaining failures moves the incremental window forward.

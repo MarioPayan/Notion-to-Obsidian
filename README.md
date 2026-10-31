@@ -84,10 +84,13 @@ changed, or when you pass `--full`.
 
 **Limits of incremental sync:**
 
-- Permanent deletions, and pages moved out of every root, are only detected
-  by `--full`. Until then their notes show the last known content as active.
-- It relies on Notion search, which can lag a few seconds behind an edit, and
-  only returns what the integration can see.
+- Pages sent to the trash, permanent deletions and pages moved out of every
+  root are only detected by `--full`: Notion search leaves trashed pages out,
+  and trashing a child does not change its parent's edit time. Until then
+  their notes show the last known content as active.
+- It relies on Notion search, which lagged about 1–2 minutes behind a new page
+  in testing (the 5-minute `sync_margin_minutes` covers that), and only returns
+  what the integration can see.
 - A run with errors does not advance the saved time, so the next run retries
   the same window.
 
@@ -103,9 +106,11 @@ notion_status: active        # active | archived | in_trash | unreachable
 status_since: 2026-01-15     # date it took that status
 ```
 
-- **Incremental run:** when search reports a mirrored page as archived or in
-  the trash, its status changes; when it shows up live again, it goes back to
-  `active`.
+- **Incremental run:** every note that is not `active` is re-checked with a
+  GET (usually zero or a few), so a page restored from the trash goes back to
+  `active` right away. Restoring does not change a page's edit time, so search
+  alone would never report it. New trash/archive events need `--full` (see
+  above).
 - **Full run:** every cached page the crawl did not reach is checked with a
   GET. Notion's `in_trash` / `archived` / `is_archived` flags set `in_trash` or
   `archived`; a 404 or 403 sets `unreachable` (deleted, or no longer shared
